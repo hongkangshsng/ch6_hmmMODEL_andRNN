@@ -1,61 +1,68 @@
 # 📊 機器學習訓練資料預處理管道 (Data Preprocessing Pipeline)
 
-本專案實作了一個完整的 Python 自動化資料預處理流程。透過 `scikit-learn` 的 `Pipeline` 與 `ColumnTransformer` 技術，實現包含缺失值處理（Imputation）、特徵縮放（Feature Scaling）、獨熱編碼（One-Hot Encoding）以及資料分佈視覺化的完整運作機制，適用於機器學習模型訓練前的資料準備階段。
+# 📊 機器學習數據處理與隱馬爾可夫模型實務 (ML Preprocessing & HMM)
+
+本專案包含兩個核心單元：**自動化資料預處理管道**與**隱馬爾可夫模型 (HMM) 狀態解碼**。整體流程基於 200 筆貸款申請數據，展示了從原始資料清洗、特徵工程到時序狀態序列預測的完整機器學習開發實務[cite: 8, 21]。
 
 ---
 
-## 🛠️ 預處理執行步驟 (Preprocessing Pipeline)
+## 🛠️ 第一節：機器學習訓練資料預處理管道 (6-1)
 
-在將資料送入機器學習模型前，我們執行了以下核心預處理步驟：
+在將資料送入機器學習模型前，我們透過 `scikit-learn` 的 `Pipeline` 與 `ColumnTransformer` 技術執行以下核心步驟[cite: 8]：
 
 1. **缺失值處理 (Missing Value Imputation)**：
-   * **數值型特徵** (`Age`, `Salary`, `Experience_Years`)：採用 **中位數 (Median)** 填補，避免極端數值（離群值）拉偏整體數據。
-   * **類別型特徵** (`Department`, `City`, `Education`)：採用 **眾數 (Most Frequent)** 填補最常見的類別。
-
+   * **數值型欄位** (`Age`, `Salary`, `Experience_Years`)：採用 **中位數 (Median)** 填補，避免離群值拉偏整體數據[cite: 8]。
+   * **類別型欄位** (`Department`, `City`, `Education`)：採用 **眾數 (Most Frequent)** 填補最常見的類別[cite: 8]。
 2. **特徵縮放 (Feature Scaling)**：
-   * 使用 **StandardScaler (Z-score 標準化)**，將數值特徵轉換為平均值為 0、標準差為 1 的常態分佈，消除因不同變數單位（如薪資與年齡）數量級差異過大對模型權重產生的偏誤。
-
+   * 使用 **StandardScaler (Z-score 標準化)**，將數值特徵轉換為平均值為 0、標準差為 1 的常態分佈[cite: 8]。
 3. **類別轉換 (Categorical Encoding)**：
-   * 使用 **One-Hot Encoding (獨熱編碼)** 將類別文字轉為二元數值矩陣（0 或 1），避免給予類別字串不合理的順序大小關聯。
+   * 使用 **One-Hot Encoding (獨熱編碼)** 將類別文字轉為二元數值矩陣（0 或 1）[cite: 8]。
+4. **防止資料洩漏 (Data Leakage Prevention)**：
+   * 劃分 8:2 訓練/測試集，且**僅對訓練集執行 `.fit_transform()`**[cite: 8]。
 
-4. **資料集劃分與防止洩漏 (Train/Test Split & Data Leakage Prevention)**：
-   * 先將資料以 8:2 比例劃分為訓練集與測試集。
-   * **僅對訓練集執行 `.fit_transform()`**，測試集則使用訓練集擬合出的參數執行 `.transform()`，確保訓練過程完全符合真實環境嚴謹度。
-
----
-
-## 📈 視覺化分析報告 (Visualization Analysis)
-
-下圖為預處理管道執行後導出的數據特徵與轉換結構圖：
+### 📈 預處理視覺化分析報告
 
 ![Data Preprocessing Results](preprocessing_result.png)
 
-### 1. 數值特徵縮放分佈圖 (圖左)
-* **圖表意涵**：展示原始薪資與標準化後（Z-score）薪資的分佈重疊比較。
-* **數據解析**：
-  * **下軸 (Salary)**：原始薪資數據涵蓋範圍廣（$20,000 \sim 120,000$）。
-  * **上軸 (Scaled Salary)**：經過 `StandardScaler` 轉換後，數據中心點縮放至 **0** 附近，絕大多數數據落在 **-2 至 +2** 的標準差區間內。
-  * **核心效果**：成功保留了原始薪資右偏分佈（Right-skewed）的數據型態，同時縮放數值範圍以提升模型的梯度下降收斂效率。
-
-### 2. 類別特徵獨熱編碼矩陣 (圖中)
-* **圖表意涵**：抽樣展示前 15 筆樣本經 One-Hot Encoding 後的二元值（0 與 1）分佈熱力圖。
-* **數據解析**：
-  * **X 軸**：類別文字欄位被拆解為獨立特徵（例如 `Department_HR`、`City_Taipei`、`Education_Master` 等）。
-  * **Y 軸 (Sample Index)**：代表具體的樣本編號。
-  * **黃色 (0) / 深藍色 (1)**：清楚呈現每個樣本在對應類別特徵上的激活狀態，確保類別特徵轉化為模型可直接計算的矩陣。
-
-### 3. 特徵相關性矩陣 (圖右)
-* **圖表意涵**：呈現預處理後所有特徵變數之間的皮爾森相關係數 (Pearson Correlation Matrix)。
-* **數據解析**：
-  * 對角線呈現深紅（相關性為 1.0），代表變數與自身高度相關。
-  * **多重共線性檢視**：圖中未出現大面積深紅（高正相關）或深藍（高負相關）的異常區塊，說明經 One-Hot Encoding 與縮放後的特徵之間獨立性良好，無嚴重的共線性（Multicollinearity）問題，非常適合直接輸入線性模型或樹狀模型進行訓練。
+* **圖 1 (數值特徵縮放分佈)**：原始薪資數據（$20,000 \sim 120,000$）被成功收斂至 Z-score 範圍（-2 至 +2）內，加速模型梯度下降效率[cite: 6]。
+* **圖 2 (獨熱編碼矩陣)**：展示類別變數轉化為二元 0/1 矩陣的激活狀態[cite: 6]。
+* **圖 3 (特徵相關性矩陣)**：各欄位相關性良好，無多重共線性（Multicollinearity）問題[cite: 6]。
 
 ---
 
-## 📁 檔案結構 (Project Structure)
+## 🔄 第二節：隱馬爾可夫模型 (HMM) 統計與狀態解碼 (6-2)
+
+在第二階段，我們採用 **隱馬爾可夫模型 (Hidden Markov Model, HMM)**，將客戶從申請到審核完成的動態過程進行時序建模[cite: 17, 21]。
+
+### 📘 HMM 三要素統計概念
+* **初始狀態概率向量 ($\pi$)**：客戶進入審核流程的起始狀態分佈（100% 從 `Pending` 開始）[cite: 17, 21]。
+* **狀態轉移概率矩陣 ($A$)**：計算客戶從當前審核狀態轉移到下一個狀態的概率（如 `Pending` $\rightarrow$ `Under_Review`）[cite: 17, 21]。
+* **觀測概率矩陣 ($B$) / 發射矩陣**：計算特定審核狀態下，表現出不同特徵風險等級（高/中/低風險）的條件概率[cite: 17, 21]。
+
+### 📊 HMM 統計矩陣視覺化分析
+
+![HMM Matrix Results](hmm_result.png)
+
+#### 1. 狀態轉移概率矩陣 (圖左)
+* **圖表意涵**：呈現隱藏狀態（Pending, Under_Review, Approved, Rejected）之間的轉移機率[cite: 21]。
+* **數據解析**：
+  * `Pending` 到 `Under_Review` 的轉移概率為 **1.00**，說明所有申請案皆必經審核階段[cite: 21]。
+  * `Under_Review` 依據客戶風險特徵，分流轉移至 `Approved` (核准, 0.35) 或 `Rejected` (退件, 0.65)[cite: 21]。
+  * `Approved` 與 `Rejected` 作為審核終點狀態（吸收態），其轉移矩陣列和經修復後嚴格符合機率公理（等於 1.00）[cite: 19, 21]。
+
+#### 2. 觀測概率矩陣 (圖右)
+* **圖表意涵**：呈現特定隱藏狀態發射出對應風險特徵（0: 低風險, 1: 中風險, 2: 高風險）的條件機率分佈[cite: 21]。
+* **數據解析**：
+  * 透過 **`CategoricalHMM`** 與 **維特比演算法 (Viterbi Algorithm)**，模型可成功從連續觀測風險序列中，解碼出推測概率最高的隱藏審核狀態變化鏈[cite: 18, 20]。
+
+---
+
+## 📁 專案檔案結構 (Project Structure)
 
 ```text
-├── training_data.csv          # 原始訓練數據資料集
-├── 訓練樣本預處理.py           # 預處理與視覺化主要執行程式碼
-├── preprocessing_result.png   # 導出的預處理視覺化分析圖表
-└── README.md                  # 專案說明文件
+├── training_data.csv          # 200 筆原始訓練數據集
+├── 訓練樣本預處理.py           # 6-1 節預處理與視覺化程式碼
+├── 6-2_hmm_model.py           # 6-2 節 HMM 統計矩陣與維特比解碼程式碼
+├── preprocessing_result.png   # 6-1 節預處理視覺化圖表
+├── hmm_result.png             # 6-2 節 HMM 矩陣視覺化圖表
+└── README.md                  # 專案完整說明文件
