@@ -1,0 +1,8 @@
+# Python virtual environments and interpreter caches
+.venv/
+__pycache__/
+*.py[cod]
+
+# Common tool caches
+.pytest_cache/
+.mypy_cache/
