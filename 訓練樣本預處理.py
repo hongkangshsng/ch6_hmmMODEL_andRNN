@@ -1,5 +1,12 @@
+"""Preprocess the bundled loan data and save reproducible visualizations."""
+
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")  # Allow image generation in headless environments.
+
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.compose import ColumnTransformer
@@ -8,116 +15,131 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-# 設定繪圖風格與中文字型（若無中文字型可自動降級顯示）
-sns.set_theme(style="whitegrid")
-plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei", "SimHei", "Arial"]
-plt.rcParams["axes.unicode_minus"] = False
 
-# ==========================================
-# 1. 讀取數據與基礎預處理
-# ==========================================
-file_path = "training_data.csv"
-df = pd.read_csv(file_path)
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "training_data.csv"
+OUTPUT_PATH = BASE_DIR / "preprocessing_result.png"
+TARGET_COLUMN = "Loan_Approved"
+NUMERIC_FEATURES = ["Age", "Salary", "Experience_Years"]
+CATEGORICAL_FEATURES = ["Department", "City", "Education"]
+REQUIRED_COLUMNS = set(NUMERIC_FEATURES + CATEGORICAL_FEATURES + [TARGET_COLUMN])
 
-X = df.drop(columns=["Loan_Approved"])
-y = df["Loan_Approved"]
 
-numeric_features = ["Age", "Salary", "Experience_Years"]
-categorical_features = ["Department", "City", "Education"]
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load the bundled CSV and fail early when its schema is incompatible."""
+    df = pd.read_csv(data_path)
+    missing = REQUIRED_COLUMNS.difference(df.columns)
+    if missing:
+        raise ValueError(f"training_data.csv 缺少必要欄位：{sorted(missing)}")
+    return df
 
-numeric_transformer = Pipeline(
-    steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ]
-)
 
-categorical_transformer = Pipeline(
-    steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        (
-            "onehot",
-            OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-        ),
-    ]
-)
+def make_preprocessor() -> ColumnTransformer:
+    """Build the numeric and categorical transformations used in the project."""
+    numeric_transformer = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_transformer = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
+    return ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, NUMERIC_FEATURES),
+            ("cat", categorical_transformer, CATEGORICAL_FEATURES),
+        ]
+    )
 
-preprocessor = ColumnTransformer(
-    transformers=[
-        ("num", numeric_transformer, numeric_features),
-        ("cat", categorical_transformer, categorical_features),
-    ]
-)
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+def plot_preprocessing_result(
+    raw_training_data: pd.DataFrame,
+    processed_training_data: pd.DataFrame,
+    encoded_category_columns: list[str],
+) -> None:
+    """Create the three visualizations used in the README."""
+    sns.set_theme(style="whitegrid")
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-X_train_processed = preprocessor.fit_transform(X_train)
+    sns.kdeplot(
+        raw_training_data["Salary"].dropna(),
+        ax=axes[0],
+        color="blue",
+        label="Raw salary",
+        fill=True,
+    )
+    axes[0].set_title("1. Raw salary distribution", fontsize=12)
+    axes[0].set_xlabel("Salary")
+    axes[0].legend()
 
-# 取得轉換後的完整特徵欄位名稱
-cat_encoder = preprocessor.named_transformers_["cat"]["onehot"]
-encoded_cat_cols = cat_encoder.get_feature_names_out(categorical_features)
-all_feature_names = numeric_features + list(encoded_cat_cols)
+    scaled_axis = axes[0].twiny()
+    sns.kdeplot(
+        processed_training_data["Salary"],
+        ax=scaled_axis,
+        color="red",
+        label="Scaled salary",
+        fill=True,
+        alpha=0.3,
+    )
+    scaled_axis.set_xlabel("Scaled salary (Z-score)")
+    scaled_axis.legend(loc="upper right")
 
-X_train_df = pd.DataFrame(
-    X_train_processed, columns=all_feature_names, index=X_train.index
-)
+    sns.heatmap(
+        processed_training_data[encoded_category_columns].head(15),
+        annot=True,
+        cmap="YlGnBu",
+        cbar=False,
+        ax=axes[1],
+        fmt=".0f",
+    )
+    axes[1].set_title("2. One-hot encoded categorical features", fontsize=12)
+    axes[1].set_ylabel("Sample index")
 
-print(
-    f"預處理完成！特徵維度從 {X_train.shape[1]} 維擴展為 {X_train_df.shape[1]} 維。"
-)
+    correlation = processed_training_data.corr()
+    sns.heatmap(correlation, cmap="coolwarm", ax=axes[2], vmin=-1, vmax=1)
+    axes[2].set_title("3. Processed feature correlation", fontsize=12)
 
-# ==========================================
-# 2. 預處理結果視覺化 (Data Visualization)
-# ==========================================
+    fig.tight_layout()
+    fig.savefig(OUTPUT_PATH, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-# 圖 1：預處理前後的數值分佈 (以 Salary 為例)
-sns.kdeplot(
-    X_train["Salary"].dropna(),
-    ax=axes[0],
-    color="blue",
-    label="Raw Salary (原始)",
-    fill=True,
-)
-axes[0].set_title("1. 原始薪資分佈 (含有缺失值與大範圍數值)", fontsize=12)
-axes[0].set_xlabel("Salary")
-axes[0].legend()
+def main() -> None:
+    df = load_data(DATA_PATH)
+    features = df.drop(columns=[TARGET_COLUMN])
+    target = df[TARGET_COLUMN]
 
-ax0_twin = axes[0].twiny()
-sns.kdeplot(
-    X_train_df["Salary"],
-    ax=ax0_twin,
-    color="red",
-    label="Scaled Salary (標準化後)",
-    fill=True,
-    alpha=0.3,
-)
-ax0_twin.set_xlabel("Scaled Salary (Z-score)")
-ax0_twin.legend(loc="upper right")
+    x_train, x_test, _, _ = train_test_split(
+        features, target, test_size=0.2, random_state=42, stratify=target
+    )
+    preprocessor = make_preprocessor()
 
-# 圖 2：類別特徵經 One-Hot Encoding 後的熱力圖 (前 15 筆)
-sns.heatmap(
-    X_train_df[encoded_cat_cols].head(15),
-    annot=True,
-    cmap="YlGnBu",
-    cbar=False,
-    ax=axes[1],
-    fmt=".0f",
-)
-axes[1].set_title(
-    "2. 類別特徵轉獨熱編碼 (One-Hot Encoded Features)", fontsize=12
-)
-axes[1].set_ylabel("Sample Index")
+    # Fit only on the training split, then transform train and test data.
+    x_train_processed = preprocessor.fit_transform(x_train)
+    x_test_processed = preprocessor.transform(x_test)
 
-# 圖 3：處理後的特徵相關性矩陣 (Correlation Heatmap)
-corr = X_train_df.corr()
-sns.heatmap(corr, cmap="coolwarm", ax=axes[2], vmin=-1, vmax=1)
-axes[2].set_title("3. 預處理後全特徵相關性圖", fontsize=12)
+    category_encoder = preprocessor.named_transformers_["cat"]["onehot"]
+    encoded_category_columns = list(
+        category_encoder.get_feature_names_out(CATEGORICAL_FEATURES)
+    )
+    feature_names = NUMERIC_FEATURES + encoded_category_columns
+    x_train_df = pd.DataFrame(
+        x_train_processed, columns=feature_names, index=x_train.index
+    )
 
-plt.tight_layout()
-# 存成高解析度圖片檔案
-plt.savefig("preprocessing_result.png", dpi=300, bbox_inches="tight")
-print("視覺化圖表已成功儲存為 preprocessing_result.png！")
+    plot_preprocessing_result(x_train, x_train_df, encoded_category_columns)
+    print(
+        "Preprocessing completed: "
+        f"{features.shape[1]} input features -> {x_train_df.shape[1]} transformed features."
+    )
+    print(f"Train/test rows: {len(x_train)}/{len(x_test)}")
+    print(f"Transformed test shape: {x_test_processed.shape}")
+    print(f"Saved visualization: {OUTPUT_PATH.name}")
+
+
+if __name__ == "__main__":
+    main()
