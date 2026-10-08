@@ -1,68 +1,129 @@
-# 📊 機器學習訓練資料預處理管道 (Data Preprocessing Pipeline)
+# 機器學習資料預處理與隱馬可夫模型（HMM）實作
 
-# 📊 機器學習數據處理與隱馬爾可夫模型實務 (ML Preprocessing & HMM)
+這是以貸款申請範例資料建立的可重現機器學習教學專案。內容分成兩個已完成的單元：以 <code>scikit-learn</code> 建立資料預處理管道，以及以計數估計 HMM 機率矩陣、再用維特比演算法解碼一段示範觀測序列。
 
-本專案包含兩個核心單元：**自動化資料預處理管道**與**隱馬爾可夫模型 (HMM) 狀態解碼**。整體流程基於 200 筆貸款申請數據，展示了從原始資料清洗、特徵工程到時序狀態序列預測的完整機器學習開發實務[cite: 8, 21]。
+> **作品集定位：** 本專案展示資料清理、特徵轉換、可重現執行與 HMM 參數估計的工程流程；它不是經訓練或校準後可用於真實貸款核准的預測系統。
 
----
+## 專案狀態與範圍
 
-## 🛠️ 第一節：機器學習訓練資料預處理管道 (6-1)
+| 模組 | 狀態 | 實作範圍 |
+| --- | --- | --- |
+| 資料預處理 | 已完成 | 缺失值填補、標準化、One-Hot Encoding、80/20 分層切分與圖表輸出。 |
+| HMM | 已完成 | 由標記的三步審核流程估計 $\pi$、$A$、$B$，並以 <code>CategoricalHMM</code> 執行維特比解碼。 |
+| RNN | **尚未實作** | 儲存庫名稱源自課程章節；目前沒有 RNN 模型架構、訓練迴圈、權重或推論結果，不能宣稱具備 RNN 功能。 |
 
-在將資料送入機器學習模型前，我們透過 `scikit-learn` 的 `Pipeline` 與 `ColumnTransformer` 技術執行以下核心步驟[cite: 8]：
+根目錄中名稱為 <code>清華大學出版社_機器學習_ch6標註工程與循環神經網路.py</code> 的檔案僅含 <code>python.py</code> 文字，並非可執行的 RNN 程式；保留它僅反映既有課程檔案，不納入本專案的可執行流程。
 
-1. **缺失值處理 (Missing Value Imputation)**：
-   * **數值型欄位** (`Age`, `Salary`, `Experience_Years`)：採用 **中位數 (Median)** 填補，避免離群值拉偏整體數據[cite: 8]。
-   * **類別型欄位** (`Department`, `City`, `Education`)：採用 **眾數 (Most Frequent)** 填補最常見的類別[cite: 8]。
-2. **特徵縮放 (Feature Scaling)**：
-   * 使用 **StandardScaler (Z-score 標準化)**，將數值特徵轉換為平均值為 0、標準差為 1 的常態分佈[cite: 8]。
-3. **類別轉換 (Categorical Encoding)**：
-   * 使用 **One-Hot Encoding (獨熱編碼)** 將類別文字轉為二元數值矩陣（0 或 1）[cite: 8]。
-4. **防止資料洩漏 (Data Leakage Prevention)**：
-   * 劃分 8:2 訓練/測試集，且**僅對訓練集執行 `.fit_transform()`**[cite: 8]。
+## 專案結構
 
-### 📈 預處理視覺化分析報告
+~~~text
+.
+├── training_data.csv                         # 200 筆貸款申請範例資料
+├── 訓練樣本預處理.py                          # 資料預處理與視覺化
+├── 6-2_hmm_model.py                          # HMM 參數估計、維特比解碼與視覺化
+├── requirements.txt                          # 已驗證的 Python 套件版本
+├── preprocessing_result.png                  # 執行預處理程式後產生／更新
+├── hmm_result.png                            # 執行 HMM 程式後產生／更新
+└── README.md
+~~~
 
-![Data Preprocessing Results](preprocessing_result.png)
+## 資料輸入
 
-* **圖 1 (數值特徵縮放分佈)**：原始薪資數據（$20,000 \sim 120,000$）被成功收斂至 Z-score 範圍（-2 至 +2）內，加速模型梯度下降效率[cite: 6]。
-* **圖 2 (獨熱編碼矩陣)**：展示類別變數轉化為二元 0/1 矩陣的激活狀態[cite: 6]。
-* **圖 3 (特徵相關性矩陣)**：各欄位相關性良好，無多重共線性（Multicollinearity）問題[cite: 6]。
+兩支程式皆讀取專案根目錄的 <code>training_data.csv</code>。檔案以 UTF-8（可含 BOM）CSV 儲存，包含 200 筆範例資料與以下欄位：
 
----
+| 欄位 | 型態／用途 |
+| --- | --- |
+| <code>Age</code>、<code>Salary</code>、<code>Experience_Years</code> | 數值特徵；預處理時以中位數補值並標準化。 |
+| <code>Department</code>、<code>City</code>、<code>Education</code> | 類別特徵；預處理時以眾數補值並做 One-Hot Encoding。 |
+| <code>Loan_Approved</code> | 目標標記；<code>1</code> 代表核准、<code>0</code> 代表拒絕。HMM 以它建構最終工作流程狀態。 |
 
-## 🔄 第二節：隱馬爾可夫模型 (HMM) 統計與狀態解碼 (6-2)
+程式會先檢查必要欄位。若替換資料，請保留上述欄名與 <code>Loan_Approved</code> 的 0/1 編碼；資料筆數可不同，但此專案的圖表與解讀是針對目前的教學資料設計。
 
-在第二階段，我們採用 **隱馬爾可夫模型 (Hidden Markov Model, HMM)**，將客戶從申請到審核完成的動態過程進行時序建模[cite: 17, 21]。
+## 環境安裝
 
-### 📘 HMM 三要素統計概念
-* **初始狀態概率向量 ($\pi$)**：客戶進入審核流程的起始狀態分佈（100% 從 `Pending` 開始）[cite: 17, 21]。
-* **狀態轉移概率矩陣 ($A$)**：計算客戶從當前審核狀態轉移到下一個狀態的概率（如 `Pending` $\rightarrow$ `Under_Review`）[cite: 17, 21]。
-* **觀測概率矩陣 ($B$) / 發射矩陣**：計算特定審核狀態下，表現出不同特徵風險等級（高/中/低風險）的條件概率[cite: 17, 21]。
+已於 **Python 3.12.14** 及 <code>requirements.txt</code> 中鎖定的版本驗證。建議在專案目錄建立虛擬環境：
 
-### 📊 HMM 統計矩陣視覺化分析
+~~~bash
+python -m venv .venv
 
-![HMM Matrix Results](hmm_result.png)
+# macOS / Linux
+source .venv/bin/activate
 
-#### 1. 狀態轉移概率矩陣 (圖左)
-* **圖表意涵**：呈現隱藏狀態（Pending, Under_Review, Approved, Rejected）之間的轉移機率[cite: 21]。
-* **數據解析**：
-  * `Pending` 到 `Under_Review` 的轉移概率為 **1.00**，說明所有申請案皆必經審核階段[cite: 21]。
-  * `Under_Review` 依據客戶風險特徵，分流轉移至 `Approved` (核准, 0.35) 或 `Rejected` (退件, 0.65)[cite: 21]。
-  * `Approved` 與 `Rejected` 作為審核終點狀態（吸收態），其轉移矩陣列和經修復後嚴格符合機率公理（等於 1.00）[cite: 19, 21]。
+# Windows PowerShell
+# .venv\Scripts\Activate.ps1
 
-#### 2. 觀測概率矩陣 (圖右)
-* **圖表意涵**：呈現特定隱藏狀態發射出對應風險特徵（0: 低風險, 1: 中風險, 2: 高風險）的條件機率分佈[cite: 21]。
-* **數據解析**：
-  * 透過 **`CategoricalHMM`** 與 **維特比演算法 (Viterbi Algorithm)**，模型可成功從連續觀測風險序列中，解碼出推測概率最高的隱藏審核狀態變化鏈[cite: 18, 20]。
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+~~~
 
----
+## 執行方式
 
-## 📁 專案檔案結構 (Project Structure)
+可從任何工作目錄執行；程式會以自身所在位置尋找 CSV 並把 PNG 輸出回專案根目錄。
 
-```text
-├── training_data.csv          # 200 筆原始訓練數據集
-├── 訓練樣本預處理.py           # 6-1 節預處理與視覺化程式碼
-├── 6-2_hmm_model.py           # 6-2 節 HMM 統計矩陣與維特比解碼程式碼
-├── preprocessing_result.png   # 6-1 節預處理視覺化圖表
-├── hmm_result.png             # 6-2 節 HMM 矩陣視覺化圖表
-└── README.md                  # 專案完整說明文件
+~~~bash
+# 1. 建立訓練／測試切分、執行預處理並更新 preprocessing_result.png
+python 訓練樣本預處理.py
+
+# 2. 估計 HMM 矩陣、執行維特比示範並更新 hmm_result.png
+python 6-2_hmm_model.py
+~~~
+
+預處理程式會在訓練集（80%，固定 <code>random_state=42</code> 且依 <code>Loan_Approved</code> 分層）上呼叫 <code>.fit_transform()</code>，再使用同一個轉換器處理測試集，避免測試資料洩漏。它會輸出轉換前後的特徵數、訓練／測試筆數、轉換後測試矩陣尺寸，以及 <code>preprocessing_result.png</code>。
+
+HMM 程式會輸出資料筆數、<code>hmm_result.png</code>、固定示範觀測序列 <code>[0, 1, 2]</code> 的維特比路徑，以及 $\pi$ 與機率矩陣列和檢查結果。
+
+## HMM 方法與程式對照
+
+對每筆申請資料，程式依 <code>Loan_Approved</code> 建構已標記的三步流程：
+
+- <code>Loan_Approved = 1</code>：<code>Pending → Under_Review → Approved</code>
+- <code>Loan_Approved = 0</code>：<code>Pending → Under_Review → Rejected</code>
+
+每個步驟的觀測值是由年齡與薪資計算的固定風險類別：
+
+| 觀測值 | 規則 |
+| --- | --- |
+| 0（低風險） | <code>Salary > 70000</code> 且 <code>Age > 30</code> |
+| 2（高風險） | <code>Salary < 45000</code> 或 <code>Age < 25</code> |
+| 1（中風險） | 其餘情況；缺失的年齡或薪資未命中上述條件時也歸為此類。 |
+
+令第 $k$ 條已標記序列的第 $t$ 個狀態與觀測分別為 $s_t^{(k)}$、$o_t^{(k)}$。程式以計數正規化估計：
+
+$$
+\hat{\pi}_i = \frac{\#\{k:s_0^{(k)}=i\}}{N}, \qquad
+\hat{A}_{ij} = \frac{\#\{(k,t):s_t^{(k)}=i, s_{t+1}^{(k)}=j\}}{\#\{(k,t):s_t^{(k)}=i\}},
+$$
+
+$$
+\hat{B}_{i,o} = \frac{\#\{(k,t):s_t^{(k)}=i, o_t^{(k)}=o\}}{\#\{(k,t):s_t^{(k)}=i\}}.
+$$
+
+未出現在流程中的終點外出轉移會被設成自迴圈，使 $A$ 的每列皆為合法機率分布。若輸入資料完全沒有某個狀態，程式會以均勻分布作為該狀態 $B$ 的防禦性預設值。接著把 $\hat{\pi}$、$\hat{A}$、$\hat{B}$ 指定給 <code>hmmlearn.hmm.CategoricalHMM</code>，並以 Viterbi 演算法解碼固定的示範序列。
+
+這不是 <code>model.fit()</code> 從未標記資料學得的隱狀態模型：狀態序列是由 <code>Loan_Approved</code> 建構，且同一筆申請的風險觀測值會在三個時間步重複。因此輸出的解碼只用於說明 HMM 機率結構與 API 使用，不應解讀為對真實申請流程的預測或因果分析。
+
+## 結果輸出
+
+![資料預處理結果](preprocessing_result.png)
+
+![HMM 機率矩陣](hmm_result.png)
+
+兩張 PNG 會在每次執行對應程式時更新。HMM 圖左為狀態轉移矩陣 $A$，圖右為發射機率矩陣 $B$；實際數值取決於 <code>training_data.csv</code>。
+
+## 基本驗證
+
+在上述已鎖定環境中執行以下檢查：
+
+~~~bash
+python -m compileall 訓練樣本預處理.py 6-2_hmm_model.py
+python 訓練樣本預處理.py
+python 6-2_hmm_model.py
+~~~
+
+預期兩支程式皆結束碼為 0，並在專案根目錄生成／更新兩張 PNG。HMM 的主控台最後一行應回報 <code>pi=1.00</code> 與 <code>A rows=True, B rows=True</code>。
+
+## 後續可擴充方向
+
+- 建立真正的時序資料集與切分策略，避免以同一列特徵重複成三個觀測步。
+- 將 HMM 做為基準模型後，再加入獨立的 RNN（如 PyTorch LSTM/GRU）訓練、驗證指標與推論範例。
+- 新增單元測試與資料驗證，並在持續整合環境中執行。
