@@ -1,130 +1,187 @@
+"""Estimate a small categorical HMM from the bundled loan-workflow example.
+
+This is a teaching demonstration. The hidden workflow states are constructed
+from Loan_Approved and the three-valued observation is a simple rule based
+on age and salary; this script is not a trained loan-approval model.
+"""
+
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")  # Allow image generation in headless environments.
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from hmmlearn.hmm import CategoricalHMM
 
-# 設定繪圖風格與字型
-sns.set_theme(style="whitegrid")
-plt.rcParams["font.sans-serif"] = ["Microsoft JhengHei", "SimHei", "Arial"]
-plt.rcParams["axes.unicode_minus"] = False
 
-# ==========================================
-# 1. 讀取與處理 200 筆訓練資料集
-# ==========================================
-file_path = "training_data.csv"
-df = pd.read_csv(file_path)
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "training_data.csv"
+OUTPUT_PATH = BASE_DIR / "hmm_result.png"
+STATES = ["Pending", "Under_Review", "Approved", "Rejected"]
+OBSERVATION_LABELS = ["Low_Risk (0)", "Mid_Risk (1)", "High_Risk (2)"]
+REQUIRED_COLUMNS = {"Age", "Salary", "Loan_Approved"}
 
-states = ["Pending", "Under_Review", "Approved", "Rejected"]
-n_states = len(states)
 
-# 依薪資與年齡簡化風險等級觀測值 (0: 低風險, 1: 中風險, 2: 高風險)
-df["Risk_Level"] = 1
-df.loc[(df["Salary"] > 70000) & (df["Age"] > 30), "Risk_Level"] = 0
-df.loc[(df["Salary"] < 45000) | (df["Age"] < 25), "Risk_Level"] = 2
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load and validate the tabular data needed by this demonstration."""
+    df = pd.read_csv(data_path)
+    missing = REQUIRED_COLUMNS.difference(df.columns)
+    if missing:
+        raise ValueError(f"training_data.csv 缺少必要欄位：{sorted(missing)}")
+    if not df["Loan_Approved"].isin([0, 1]).all():
+        raise ValueError("Loan_Approved 必須只包含 0（Rejected）或 1（Approved）。")
+    return df
 
-np.random.seed(42)
-simulated_state_sequences = []
-simulated_obs_sequences = []
 
-for _, row in df.iterrows():
-    risk = row["Risk_Level"]
-    if row["Loan_Approved"] == 1:
-        s_seq = [0, 1, 2]  # Pending -> Under_Review -> Approved
-    else:
-        s_seq = [0, 1, 3]  # Pending -> Under_Review -> Rejected
+def add_risk_level(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the fixed three-class observation used by the categorical HMM.
 
-    simulated_state_sequences.append(s_seq)
-    simulated_obs_sequences.append([risk, risk, risk])
+    0 = salary > 70,000 and age > 30; 2 = salary < 45,000 or age < 25;
+    all remaining cases (including missing values that match neither rule) are 1.
+    """
+    result = df.copy()
+    result["Risk_Level"] = 1
+    result.loc[
+        (result["Salary"] > 70000) & (result["Age"] > 30), "Risk_Level"
+    ] = 0
+    result.loc[
+        (result["Salary"] < 45000) | (result["Age"] < 25), "Risk_Level"
+    ] = 2
+    return result
 
-# ==========================================
-# 2. 統計 HMM 三要素矩陣 (pi, A, B)
-# ==========================================
-# (1) 初始狀態概率向量 pi
-pi = np.zeros(n_states)
-for seq in simulated_state_sequences:
-    pi[seq[0]] += 1
-pi = pi / np.sum(pi)
 
-# (2) 狀態轉移矩陣 A (修復終點狀態列和為 1)
-A = np.zeros((n_states, n_states))
-for seq in simulated_state_sequences:
-    for t in range(len(seq) - 1):
-        A[seq[t], seq[t + 1]] += 1
+def build_sequences(df: pd.DataFrame) -> tuple[list[list[int]], list[list[int]]]:
+    """Construct labelled three-step workflow sequences for each application."""
+    state_sequences: list[list[int]] = []
+    observation_sequences: list[list[int]] = []
 
-row_sums = A.sum(axis=1, keepdims=True)
-for i in range(n_states):
-    if row_sums[i] == 0:
-        A[i, i] = 1.0
-        row_sums[i] = 1.0
-A = A / row_sums
+    for _, row in df.iterrows():
+        terminal_state = 2 if row["Loan_Approved"] == 1 else 3
+        state_sequences.append([0, 1, terminal_state])
+        risk = int(row["Risk_Level"])
+        # The same applicant-level risk observation is repeated at each step.
+        observation_sequences.append([risk, risk, risk])
 
-# (3) 觀測(發射)概率矩陣 B
-n_obs = 3
-B = np.zeros((n_states, n_obs))
-for s_seq, o_seq in zip(
-    simulated_state_sequences, simulated_obs_sequences
-):
-    for s, o in zip(s_seq, o_seq):
-        B[s, o] += 1
-b_row_sums = B.sum(axis=1, keepdims=True)
-b_row_sums[b_row_sums == 0] = 1.0
-B = B / b_row_sums
+    return state_sequences, observation_sequences
 
-# ==========================================
-# 3. 建立並執行 CategoricalHMM 解碼模型
-# ==========================================
-model = CategoricalHMM(n_components=n_states)
-model.startprob_ = pi
-model.transmat_ = A
-model.emissionprob_ = B
 
-# 測試序列輸入
-test_obs = np.array([[0], [1], [2]])  # 低風險 -> 中風險 -> 高風險
-_, estimated_states = model.decode(test_obs, algorithm="viterbi")
-predicted_state_names = [states[s] for s in estimated_states]
+def estimate_parameters(
+    state_sequences: list[list[int]], observation_sequences: list[list[int]]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Estimate pi, A and B by normalized counts from labelled sequences."""
+    n_states = len(STATES)
+    n_observations = len(OBSERVATION_LABELS)
+    initial = np.zeros(n_states)
+    transition = np.zeros((n_states, n_states))
+    emission = np.zeros((n_states, n_observations))
 
-# ==========================================
-# 4. HMM 統計數據視覺化 (導出 hmm_result.png)
-# ==========================================
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for state_sequence, observation_sequence in zip(
+        state_sequences, observation_sequences
+    ):
+        initial[state_sequence[0]] += 1
+        for current_state, next_state in zip(state_sequence, state_sequence[1:]):
+            transition[current_state, next_state] += 1
+        for state, observation in zip(state_sequence, observation_sequence):
+            emission[state, observation] += 1
 
-# 圖 1：狀態轉移矩陣 A 熱力圖
-sns.heatmap(
-    A,
-    annot=True,
-    fmt=".2f",
-    cmap="YlGnBu",
-    xticklabels=states,
-    yticklabels=states,
-    ax=axes[0],
-    cbar=False,
-)
-axes[0].set_title("1. 狀態轉移概率矩陣 (Transition Matrix A)", fontsize=12)
-axes[0].set_xlabel("To State (下一狀態)")
-axes[0].set_ylabel("From State (當前狀態)")
+    initial /= initial.sum()
+    for state_index in range(n_states):
+        transition_total = transition[state_index].sum()
+        if transition_total == 0:
+            # A terminal state has no observed outgoing transition; model it as
+            # absorbing so every row remains a valid probability distribution.
+            transition[state_index, state_index] = 1.0
+        else:
+            transition[state_index] /= transition_total
 
-# 圖 2：發射(觀測)概率矩陣 B 熱力圖
-obs_labels = ["Low_Risk(0)", "Mid_Risk(1)", "High_Risk(2)"]
-sns.heatmap(
-    B,
-    annot=True,
-    fmt=".2f",
-    cmap="Oranges",
-    xticklabels=obs_labels,
-    yticklabels=states,
-    ax=axes[1],
-    cbar=False,
-)
-axes[1].set_title(
-    "2. 觀測(發射)概率矩陣 (Emission Matrix B)", fontsize=12
-)
-axes[1].set_xlabel("Observation (風險特徵)")
-axes[1].set_ylabel("State (審核階段)")
+        emission_total = emission[state_index].sum()
+        if emission_total == 0:
+            # Defensive fallback for an input with no examples of a state.
+            emission[state_index] = 1.0 / n_observations
+        else:
+            emission[state_index] /= emission_total
 
-plt.tight_layout()
-plt.savefig("hmm_result.png", dpi=300, bbox_inches="tight")
-print("6-2 HMM 執行成功！視覺化圖表已成功儲存為 hmm_result.png！")
-print(
-    f"維特比解碼測試結果：[0, 1, 2] -> {' -> '.join(predicted_state_names)}"
-)
+    return initial, transition, emission
+
+
+def plot_parameters(transition: np.ndarray, emission: np.ndarray) -> None:
+    """Save transition and emission heatmaps alongside this script."""
+    sns.set_theme(style="whitegrid")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    sns.heatmap(
+        transition,
+        annot=True,
+        fmt=".2f",
+        cmap="YlGnBu",
+        xticklabels=STATES,
+        yticklabels=STATES,
+        ax=axes[0],
+        cbar=False,
+    )
+    axes[0].set_title("State transition matrix A", fontsize=12)
+    axes[0].set_xlabel("To state")
+    axes[0].set_ylabel("From state")
+
+    sns.heatmap(
+        emission,
+        annot=True,
+        fmt=".2f",
+        cmap="Oranges",
+        xticklabels=OBSERVATION_LABELS,
+        yticklabels=STATES,
+        ax=axes[1],
+        cbar=False,
+    )
+    axes[1].set_title("Observation / emission matrix B", fontsize=12)
+    axes[1].set_xlabel("Observation")
+    axes[1].set_ylabel("State")
+
+    fig.tight_layout()
+    fig.savefig(OUTPUT_PATH, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def main() -> None:
+    df = add_risk_level(load_data(DATA_PATH))
+    state_sequences, observation_sequences = build_sequences(df)
+    initial, transition, emission = estimate_parameters(
+        state_sequences, observation_sequences
+    )
+
+    model = CategoricalHMM(
+        n_components=len(STATES),
+        n_features=len(OBSERVATION_LABELS),
+        init_params="",
+        params="",
+    )
+    model.startprob_ = initial
+    model.transmat_ = transition
+    model.emissionprob_ = emission
+
+    # A fixed toy observation sequence for demonstrating Viterbi decoding.
+    test_observations = np.array([[0], [1], [2]])
+    _, estimated_states = model.decode(test_observations, algorithm="viterbi")
+    predicted_state_names = [STATES[state] for state in estimated_states]
+
+    plot_parameters(transition, emission)
+    print(f"HMM executed successfully using {len(df)} records.")
+    print(f"Saved matrix visualization: {OUTPUT_PATH.name}")
+    print(
+        "Viterbi demonstration [0, 1, 2] -> "
+        f"{' -> '.join(predicted_state_names)}"
+    )
+    print(
+        "Probability checks: "
+        f"pi={initial.sum():.2f}, "
+        f"A rows={np.allclose(transition.sum(axis=1), 1.0)}, "
+        f"B rows={np.allclose(emission.sum(axis=1), 1.0)}"
+    )
+
+
+if __name__ == "__main__":
+    main()
